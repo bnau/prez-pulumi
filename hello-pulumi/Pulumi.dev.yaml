@@ -1,0 +1,3 @@
+config:
+  hello-pulumi:namespace: demo-pulumi
+  hello-pulumi:replicas: "1"

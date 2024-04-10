@@ -1,0 +1,3 @@
+name: hello-pulumi
+runtime: nodejs
+description: A TypeScript program to deploy a web application onto a Kubernetes cluster
