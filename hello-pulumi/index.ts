@@ -12,4 +12,6 @@ if (pulumi.getStack() === "dev") {
     throw new Error("Unknown stack");
 }
 
-stack.init();
+const outputs = stack.init();
+
+export const url = outputs.url;

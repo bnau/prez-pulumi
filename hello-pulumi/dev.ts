@@ -1,7 +1,7 @@
 import * as kubernetes from "@pulumi/kubernetes";
 import * as docker from "@pulumi/docker";
 import * as pulumi from "@pulumi/pulumi";
-import {Stack} from "./common";
+import {Stack, Outs} from "./common";
 import {Output} from "@pulumi/pulumi";
 
 const dbUser = "demo-user";
@@ -26,7 +26,7 @@ export class DevStack extends Stack {
         });
     }
 
-    application(dbHost: string): void {
+    application(dbHost: string): Output<Outs> {
         const numReplicas = this.config.getNumber("replicas") || 1;
         const appLabels = {
             app: "nginx",
@@ -81,20 +81,24 @@ export class DevStack extends Stack {
             },
         });
 
-        new kubernetes.core.v1.Service("webserverservice", {
+        const service = new kubernetes.core.v1.Service("webserverservice", {
             metadata: {
                 namespace: this.webServerNs.metadata.name,
             },
             spec: {
                 ports: [{
                     port: 80,
-                    targetPort: 80,
+                    targetPort: 8080,
                     protocol: "TCP",
                 }],
-                type: "NodePort",
+                type: "LoadBalancer",
                 selector: appLabels,
             },
         });
+
+        return pulumi.all([service.status, service.spec]).apply(([status, spec]) => ({
+            url: `http://${status.loadBalancer.ingress[0].hostname}:${spec.ports[0].port}`
+        }));
     }
 
     database(): Output<string> {

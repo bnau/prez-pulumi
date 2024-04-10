@@ -1,11 +1,15 @@
 import {Output} from "@pulumi/pulumi";
 
+export type Outs= {
+    url: string;
+}
+
 export abstract class Stack {
     abstract database(): Output<string>;
-    abstract application(dbHost: string): void;
+    abstract application(dbHost: string): Output<Outs>;
 
-    init(): void {
-        const dbHost = this.database();
-        dbHost.apply(this.application.bind(this));
+    init(): Output<Outs> {
+        return this.database()
+            .apply(this.application.bind(this))
     }
 }

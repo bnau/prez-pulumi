@@ -14,5 +14,7 @@ FROM debian:bookworm-slim
 COPY --from=builder /app/main /app/main
 COPY ./main.html /app/main.html
 
+WORKDIR /app
+
 # Run the web service on container startup.
-CMD ["/app/main"]
+CMD ["./main"]
