@@ -3,20 +3,19 @@ import * as docker from "@pulumi/docker";
 import * as pulumi from "@pulumi/pulumi";
 import {Stack, Outs} from "./common";
 import {Output} from "@pulumi/pulumi";
+import * as path from "node:path";
 
 const dbUser = "demo-user";
 const dbPassword = "my-password";
 const dbName = "demo-db"
 
-export class DevStack extends Stack {
-    private readonly config: pulumi.Config;
+export class LocalStack extends Stack {
     private readonly k8sNamespace: string;
 
     private webServerNs: kubernetes.core.v1.Namespace;
 
     constructor(config: pulumi.Config) {
         super();
-        this.config = config;
         this.k8sNamespace = config.get("namespace") || "default";
 
         this.webServerNs = new kubernetes.core.v1.Namespace("webserver", {
@@ -27,19 +26,18 @@ export class DevStack extends Stack {
     }
 
     application(dbHost: string): Output<Outs> {
-        const numReplicas = this.config.getNumber("replicas") || 1;
         const appLabels = {
             app: "nginx",
         };
         const image = new docker.Image("my-image", {
             build: {
-                context: "../backend",
+                context: path.join(__dirname, "backend"),
             },
             imageName: "pulumi-demo",
             skipPush: true,
         });
 
-        new kubernetes.apps.v1.Deployment("webserverdeployment", {
+        const deployment = new kubernetes.apps.v1.Deployment("webserverdeployment", {
             metadata: {
                 namespace: this.webServerNs.metadata.name,
             },
@@ -47,7 +45,7 @@ export class DevStack extends Stack {
                 selector: {
                     matchLabels: appLabels,
                 },
-                replicas: numReplicas,
+                replicas: 1,
                 template: {
                     metadata: {
                         labels: appLabels,
@@ -79,7 +77,7 @@ export class DevStack extends Stack {
                     },
                 },
             },
-        });
+        }, {dependsOn: [image, this.webServerNs]});
 
         const service = new kubernetes.core.v1.Service("webserverservice", {
             metadata: {
@@ -94,7 +92,7 @@ export class DevStack extends Stack {
                 type: "LoadBalancer",
                 selector: appLabels,
             },
-        });
+        }, {dependsOn: [deployment, this.webServerNs]});
 
         return pulumi.all([service.status, service.spec]).apply(([status, spec]) => ({
             url: `http://${status.loadBalancer.ingress[0].hostname}:${spec.ports[0].port}`
@@ -117,7 +115,7 @@ export class DevStack extends Stack {
                 }
 
             },
-        });
+        }, {dependsOn: this.webServerNs});
         return pgChart.getResourceProperty("v1/Service", `${this.k8sNamespace}/postgres-postgresql`, "metadata").name;
     }
 }
