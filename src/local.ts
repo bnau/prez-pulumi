@@ -1,13 +1,9 @@
 import * as kubernetes from "@pulumi/kubernetes";
 import * as docker from "@pulumi/docker";
 import * as pulumi from "@pulumi/pulumi";
-import {Stack, Outs} from "./common";
+import {Stack, dbUser, dbPassword, dbName} from "./common";
 import {Output} from "@pulumi/pulumi";
 import * as path from "node:path";
-
-const dbUser = "demo-user";
-const dbPassword = "my-password";
-const dbName = "demo-db"
 
 export class LocalStack extends Stack {
     private readonly k8sNamespace: string;
@@ -25,7 +21,7 @@ export class LocalStack extends Stack {
         });
     }
 
-    application(dbHost: string): Output<Outs> {
+    application(dbHost: string): Output<string> {
         const appLabels = {
             app: "nginx",
         };
@@ -94,9 +90,9 @@ export class LocalStack extends Stack {
             },
         }, {dependsOn: [deployment, this.webServerNs]});
 
-        return pulumi.all([service.status, service.spec]).apply(([status, spec]) => ({
-            url: `http://${status.loadBalancer.ingress[0].hostname}:${spec.ports[0].port}`
-        }));
+        return pulumi.all([service.status, service.spec])
+            .apply(([status, spec]) =>
+                `http://${status.loadBalancer.ingress[0].hostname}:${spec.ports[0].port}`);
     }
 
     database(): Output<string> {
