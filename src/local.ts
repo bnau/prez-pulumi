@@ -6,7 +6,7 @@ import {ComponentResource, Lifted, Output, OutputInstance} from "@pulumi/pulumi"
 import * as path from "node:path";
 
 type K8sApplicationArgs = {
-    webServerNs: kubernetes.core.v1.Namespace;
+    namespace: kubernetes.core.v1.Namespace;
     dbHost: Output<string>;
 }
 
@@ -26,9 +26,9 @@ class K8sApplication extends ComponentResource {
             skipPush: true,
         }, {parent: this});
 
-        const deployment = new kubernetes.apps.v1.Deployment("webserverdeployment", {
+        const deployment = new kubernetes.apps.v1.Deployment("app", {
             metadata: {
-                namespace: args.webServerNs.metadata.name,
+                namespace: args.namespace.metadata.name,
             },
             spec: {
                 selector: {
@@ -68,9 +68,9 @@ class K8sApplication extends ComponentResource {
             },
         }, {parent: this});
 
-        const service = new kubernetes.core.v1.Service("webserverservice", {
+        const service = new kubernetes.core.v1.Service("app", {
             metadata: {
-                namespace: args.webServerNs.metadata.name,
+                namespace: args.namespace.metadata.name,
             },
             spec: {
                 ports: [{
@@ -94,8 +94,8 @@ class K8sApplication extends ComponentResource {
 }
 
 type HelmDatabaseArgs = {
-    k8sNamespace: string;
-    webServerNs: kubernetes.core.v1.Namespace;
+    namespaceName: string;
+    namespace: kubernetes.core.v1.Namespace;
 }
 
 class HelmDatabase extends ComponentResource {
@@ -104,7 +104,7 @@ class HelmDatabase extends ComponentResource {
     constructor(name: string, args: HelmDatabaseArgs, opts?: pulumi.ComponentResourceOptions) {
         super("my-app:local:HelmDatabase", name, {}, opts);
         const pgChart = new kubernetes.helm.v3.Chart("postgres", {
-            namespace: args.k8sNamespace,
+            namespace: args.namespaceName,
             chart: "postgresql",
             fetchOpts: {
                 repo: "https://charts.bitnami.com/bitnami",
@@ -118,9 +118,9 @@ class HelmDatabase extends ComponentResource {
                 }
 
             },
-        }, {dependsOn: args.webServerNs, parent: this});
+        }, {dependsOn: args.namespace, parent: this});
 
-        this.host = pgChart.getResourceProperty("v1/Service", `${args.k8sNamespace}/postgres-postgresql`, "metadata").name;
+        this.host = pgChart.getResourceProperty("v1/Service", `${args.namespaceName}/postgres-postgresql`, "metadata").name;
 
         this.registerOutputs({
             host: this.host,
@@ -129,31 +129,34 @@ class HelmDatabase extends ComponentResource {
 
 }
 
-const config = new pulumi.Config();
-const k8sNamespace = config.get("namespace") || "default";
-
-const webServerNs = new kubernetes.core.v1.Namespace("webserver", {
-    metadata: {
-        name: k8sNamespace,
-    }
-});
-
 export class LocalStack extends Stack {
-    constructor(name: string) {
+    private namespaceName: string;
+    private namespace: kubernetes.core.v1.Namespace;
+    private db: HelmDatabase | undefined;
+
+    constructor(name: string, config: pulumi.Config) {
         super("my-app:local:Stack", name);
+        this.namespaceName = config.get("namespace") || "default";
+        this.namespace = new kubernetes.core.v1.Namespace("app", {
+            metadata: {
+                name: this.namespaceName,
+            }
+        });
+
     }
 
     application(dbHost: OutputInstance<string> & Lifted<string>): Output<string> {
         return new K8sApplication("my-app", {
-            webServerNs,
+            namespace: this.namespace,
             dbHost,
-        }, {parent: this}).url;
+        }, {parent: this, dependsOn: this.db}).url;
     }
 
     database(): Output<string> {
-        return new HelmDatabase("my-db", {
-            k8sNamespace,
-            webServerNs,
-        }, {parent: this}).host;
+        this.db = new HelmDatabase("my-db", {
+            namespaceName: this.namespaceName,
+            namespace: this.namespace,
+        }, {parent: this});
+        return this.db.host;
     }
 }

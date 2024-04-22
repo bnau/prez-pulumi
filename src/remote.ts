@@ -199,18 +199,22 @@ class RdsDatabase extends pulumi.ComponentResource {
     }
 }
 
-const vpc = new awsx.ec2.DefaultVpc("default", {});
 export class RemoteStack extends Stack {
+    vpc: awsx.ec2.DefaultVpc;
+    db: RdsDatabase | undefined;
+
     constructor(name: string) {
         super("my-app:remote:Stack", name);
+        this.vpc = new awsx.ec2.DefaultVpc("default", {});
     }
 
     application(dbHost: OutputInstance<string> & Lifted<string>): Output<string> {
-        return new EcsApplication("my-app", {vpc, dbHost}, {parent: this}).url;
+        return new EcsApplication("my-app", {vpc: this.vpc, dbHost}, {parent: this, dependsOn: this.db}).url;
     }
 
     database(): Output<string> {
-        return new RdsDatabase("my-db", {vpc}, {parent: this}).host;
+        this.db = new RdsDatabase("my-db", {vpc: this.vpc}, {parent: this});
+        return this.db.host;
     }
 
 }
