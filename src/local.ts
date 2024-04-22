@@ -2,26 +2,19 @@ import * as kubernetes from "@pulumi/kubernetes";
 import * as docker from "@pulumi/docker";
 import * as pulumi from "@pulumi/pulumi";
 import {Stack, dbUser, dbPassword, dbName} from "./common";
-import {Output} from "@pulumi/pulumi";
+import {ComponentResource, Lifted, Output, OutputInstance} from "@pulumi/pulumi";
 import * as path from "node:path";
 
-export class LocalStack extends Stack {
-    private readonly k8sNamespace: string;
+type K8sApplicationArgs = {
+    webServerNs: kubernetes.core.v1.Namespace;
+    dbHost: Output<string>;
+}
 
-    private webServerNs: kubernetes.core.v1.Namespace;
+class K8sApplication extends ComponentResource {
+    url: Output<string>;
 
-    constructor(config: pulumi.Config) {
-        super();
-        this.k8sNamespace = config.get("namespace") || "default";
-
-        this.webServerNs = new kubernetes.core.v1.Namespace("webserver", {
-            metadata: {
-                name: this.k8sNamespace,
-            }
-        });
-    }
-
-    application(dbHost: string): Output<string> {
+    constructor(name: string, args: K8sApplicationArgs, opts?: pulumi.ComponentResourceOptions) {
+        super("my-app:local:K8sApplication", name, {}, opts);
         const appLabels = {
             app: "nginx",
         };
@@ -31,11 +24,11 @@ export class LocalStack extends Stack {
             },
             imageName: "pulumi-demo",
             skipPush: true,
-        });
+        }, {parent: this});
 
         const deployment = new kubernetes.apps.v1.Deployment("webserverdeployment", {
             metadata: {
-                namespace: this.webServerNs.metadata.name,
+                namespace: args.webServerNs.metadata.name,
             },
             spec: {
                 selector: {
@@ -62,7 +55,7 @@ export class LocalStack extends Stack {
                                 },
                                 {
                                     name: "DB_HOST",
-                                    value: dbHost,
+                                    value: args.dbHost,
                                 },
                                 {
                                     name: "DB_NAME",
@@ -73,11 +66,11 @@ export class LocalStack extends Stack {
                     },
                 },
             },
-        }, {dependsOn: [image, this.webServerNs]});
+        }, {parent: this});
 
         const service = new kubernetes.core.v1.Service("webserverservice", {
             metadata: {
-                namespace: this.webServerNs.metadata.name,
+                namespace: args.webServerNs.metadata.name,
             },
             spec: {
                 ports: [{
@@ -88,16 +81,30 @@ export class LocalStack extends Stack {
                 type: "LoadBalancer",
                 selector: appLabels,
             },
-        }, {dependsOn: [deployment, this.webServerNs]});
+        }, {dependsOn: [deployment], parent: this});
 
-        return pulumi.all([service.status, service.spec])
+        this.url = pulumi.all([service.status, service.spec])
             .apply(([status, spec]) =>
-                `http://${status.loadBalancer.ingress[0].hostname}:${spec.ports[0].port}`);
-    }
+                `http://${status.loadBalancer.ingress[0].hostname}:${spec.ports[0].port}`)
 
-    database(): Output<string> {
+        this.registerOutputs({
+            url: this.url,
+        });
+    }
+}
+
+type HelmDatabaseArgs = {
+    k8sNamespace: string;
+    webServerNs: kubernetes.core.v1.Namespace;
+}
+
+class HelmDatabase extends ComponentResource {
+    host: Output<string>;
+
+    constructor(name: string, args: HelmDatabaseArgs, opts?: pulumi.ComponentResourceOptions) {
+        super("my-app:local:HelmDatabase", name, {}, opts);
         const pgChart = new kubernetes.helm.v3.Chart("postgres", {
-            namespace: this.k8sNamespace,
+            namespace: args.k8sNamespace,
             chart: "postgresql",
             fetchOpts: {
                 repo: "https://charts.bitnami.com/bitnami",
@@ -111,7 +118,42 @@ export class LocalStack extends Stack {
                 }
 
             },
-        }, {dependsOn: this.webServerNs});
-        return pgChart.getResourceProperty("v1/Service", `${this.k8sNamespace}/postgres-postgresql`, "metadata").name;
+        }, {dependsOn: args.webServerNs, parent: this});
+
+        this.host = pgChart.getResourceProperty("v1/Service", `${args.k8sNamespace}/postgres-postgresql`, "metadata").name;
+
+        this.registerOutputs({
+            host: this.host,
+        });
+    }
+
+}
+
+const config = new pulumi.Config();
+const k8sNamespace = config.get("namespace") || "default";
+
+const webServerNs = new kubernetes.core.v1.Namespace("webserver", {
+    metadata: {
+        name: k8sNamespace,
+    }
+});
+
+export class LocalStack extends Stack {
+    constructor(name: string) {
+        super("my-app:local:Stack", name);
+    }
+
+    application(dbHost: OutputInstance<string> & Lifted<string>): Output<string> {
+        return new K8sApplication("my-app", {
+            webServerNs,
+            dbHost,
+        }, {parent: this}).url;
+    }
+
+    database(): Output<string> {
+        return new HelmDatabase("my-db", {
+            k8sNamespace,
+            webServerNs,
+        }, {parent: this}).host;
     }
 }

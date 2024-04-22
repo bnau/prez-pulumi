@@ -2,26 +2,33 @@ import * as aws from "@pulumi/aws";
 import * as awsx from "@pulumi/awsx";
 import {dbName, dbPassword, dbUser, Stack} from "./common";
 import * as pulumi from "@pulumi/pulumi";
-import {Output} from "@pulumi/pulumi";
+import {Lifted, Output, OutputInstance} from "@pulumi/pulumi";
 import * as path from "node:path";
 
+type EcsApplicationArgs = {
+    vpc: awsx.ec2.DefaultVpc;
+    dbHost: Output<string>;
+}
 
-export class RemoteStack extends Stack {
-    private vpc = new awsx.ec2.DefaultVpc("default", {})
-    application(dbHost: string): Output<string> {
-        const ecrRepository = new awsx.ecr.Repository("my-repo", {forceDelete: true});
+class EcsApplication extends pulumi.ComponentResource {
+    url: Output<string>;
+
+    constructor(name: string, args: EcsApplicationArgs, opts?: pulumi.ComponentResourceOptions) {
+        super("my-app:remote:EcsApplication", name, {}, opts);
+
+        const ecrRepository = new awsx.ecr.Repository("my-repo", {forceDelete: true}, {parent: this});
 
         const image = ecrRepository.url.apply(url => {
             return new awsx.ecr.Image("my-image", {
                 context: path.join(__dirname, "backend"),
                 repositoryUrl: url,
-            });
+            }, {parent: this});
         })
 
-        const cluster = new aws.ecs.Cluster("backend-cluster");
+        const cluster = new aws.ecs.Cluster("backend-cluster", {}, {parent: this});
 
         const feSecurityGroup = new aws.ec2.SecurityGroup("fargate-sg", {
-            vpcId: this.vpc.vpcId,
+            vpcId: args.vpc.vpcId,
             description: "Allows all HTTP(s) traffic.",
             ingress: [
                 {
@@ -54,18 +61,18 @@ export class RemoteStack extends Stack {
                     cidrBlocks: ["0.0.0.0/0"],
                 },
             ],
-        });
+        }, {parent: this});
 
         const alb = new aws.lb.LoadBalancer(`app-alb`, {
             securityGroups: [feSecurityGroup.id],
-            subnets: this.vpc.publicSubnetIds,
-        });
+            subnets: args.vpc.publicSubnetIds,
+        }, {parent: this});
 
         const atg = new aws.lb.TargetGroup(`app-app-tg`, {
             port: 80,
             protocol: "HTTP",
             targetType: "ip",
-            vpcId: this.vpc.vpcId,
+            vpcId: args.vpc.vpcId,
             healthCheck: {
                 healthyThreshold: 2,
                 interval: 5,
@@ -73,7 +80,7 @@ export class RemoteStack extends Stack {
                 protocol: "HTTP",
                 matcher: "200-399",
             },
-        });
+        }, {parent: this});
 
         new aws.lb.Listener(`app-listener`, {
             loadBalancerArn: alb.arn,
@@ -84,28 +91,26 @@ export class RemoteStack extends Stack {
                     targetGroupArn: atg.arn,
                 },
             ],
-        });
-
-        const assumeRolePolicy = {
-            "Version": "2008-10-17",
-            "Statement": [{
-                "Sid": "",
-                "Effect": "Allow",
-                "Principal": {
-                    "Service": "ecs-tasks.amazonaws.com",
-                },
-                "Action": "sts:AssumeRole",
-            }],
-        };
+        }, {parent: this});
 
         const role = new aws.iam.Role(`app-task-role`, {
-            assumeRolePolicy: JSON.stringify(assumeRolePolicy),
-        });
+            assumeRolePolicy: JSON.stringify({
+                "Version": "2008-10-17",
+                "Statement": [{
+                    "Sid": "",
+                    "Effect": "Allow",
+                    "Principal": {
+                        "Service": "ecs-tasks.amazonaws.com",
+                    },
+                    "Action": "sts:AssumeRole",
+                }],
+            }),
+        }, {parent: this});
 
         new aws.iam.RolePolicyAttachment(`app-task-policy`, {
             role: role.name,
             policyArn: "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
-        });
+        }, {parent: this});
 
         const taskDefinition = new aws.ecs.TaskDefinition(`app-task`, {
             family: "fargate-task-definition",
@@ -121,19 +126,19 @@ export class RemoteStack extends Stack {
                     "containerPort": 80,
                     "hostPort": 80,
                     "protocol": "tcp",
-                },{
+                }, {
                     "containerPort": 8080,
                     "hostPort": 8080,
                     "protocol": "tcp",
                 }],
                 "environment": [
-                                {name: "DB_HOST", value: dbHost},
-                                {name: "DB_USER", value: dbUser},
-                                {name: "DB_PASSWORD", value: dbPassword},
-                                {name: "DB_NAME", value: dbName},
+                    {name: "DB_HOST", value: args.dbHost},
+                    {name: "DB_USER", value: dbUser},
+                    {name: "DB_PASSWORD", value: dbPassword},
+                    {name: "DB_NAME", value: dbName},
                 ],
             }]),
-        });
+        }, {parent: this});
 
         new aws.ecs.Service("app-service", {
             cluster: cluster.arn,
@@ -142,7 +147,7 @@ export class RemoteStack extends Stack {
             taskDefinition: taskDefinition.arn,
             networkConfiguration: {
                 assignPublicIp: true,
-                subnets: this.vpc.publicSubnetIds,
+                subnets: args.vpc.publicSubnetIds || [],
                 securityGroups: [feSecurityGroup.id],
             },
             loadBalancers: [{
@@ -150,18 +155,30 @@ export class RemoteStack extends Stack {
                 containerName: "app",
                 containerPort: 8080,
             }],
-        }, {customTimeouts: {create: "5m"}});
+        }, {customTimeouts: {create: "5m"}, parent: this});
 
-       return  pulumi.interpolate `http://${alb.dnsName}`;
+        this.url = pulumi.interpolate`http://${alb.dnsName}`;
+
+        this.registerOutputs({url: this.url});
     }
+}
 
-    database(): Output<string> {
+type RdsDatabaseArg = {
+    vpc: awsx.ec2.DefaultVpc;
+}
+
+class RdsDatabase extends pulumi.ComponentResource {
+    host: Output<string>;
+
+    constructor(name: string, args: RdsDatabaseArg, opts?: pulumi.ComponentResourceOptions) {
+        super("my-app:remote:RdsDatabase", name, {}, opts);
+
         const dbSecurityGroup = new aws.ec2.SecurityGroup("db-security-group", {
-            vpcId: this.vpc.vpcId,
+            vpcId: args.vpc.vpcId,
             ingress: [
                 {protocol: "tcp", fromPort: 5432, toPort: 5432, cidrBlocks: ["0.0.0.0/0"]},
             ],
-        });
+        }, {parent: this});
 
         const db = new aws.rds.Instance("backend-db", {
             allocatedStorage: 20,
@@ -174,9 +191,26 @@ export class RemoteStack extends Stack {
             vpcSecurityGroupIds: [dbSecurityGroup.id],
             skipFinalSnapshot: true,
             publiclyAccessible: true,
-        });
+        }, {parent: this});
 
-        return db.address;
+        this.host = db.address;
+
+        this.registerOutputs({host: this.host});
+    }
+}
+
+const vpc = new awsx.ec2.DefaultVpc("default", {});
+export class RemoteStack extends Stack {
+    constructor(name: string) {
+        super("my-app:remote:Stack", name);
+    }
+
+    application(dbHost: OutputInstance<string> & Lifted<string>): Output<string> {
+        return new EcsApplication("my-app", {vpc, dbHost}, {parent: this}).url;
+    }
+
+    database(): Output<string> {
+        return new RdsDatabase("my-db", {vpc}, {parent: this}).host;
     }
 
 }
