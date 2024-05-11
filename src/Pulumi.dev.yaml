@@ -1,3 +1,4 @@
+encryptionsalt: v1:kzr40Z2Z9UU=:v1:j6lDD+JnpMcSr5Oj:tkXaH6Sn3fGcyN838ONW/q/QuJCmlg==
 config:
-  namespace: demo-pulumi
-  env: local
+  hello-pulumi:env: local
+  hello-pulumi:namespace: demo-pulumi

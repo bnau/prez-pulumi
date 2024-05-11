@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"testing"
 
 	"github.com/pulumi/pulumi/pkg/v3/testing/integration"
@@ -16,7 +17,7 @@ func TestExample(t *testing.T) {
 	integration.ProgramTest(t, &integration.ProgramTestOptions{
 		Quick:       true,
 		SkipRefresh: true,
-		Dir:         path.Join(cwd, "..", "src"),
+		Dir:         path.Join(filepath.Dir(cwd), "src"),
 		Config: map[string]string{
 			"namespace": "test-pulumi",
 			"env":       "local",
