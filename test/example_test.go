@@ -21,6 +21,10 @@ func TestExample(t *testing.T) {
 		Config: map[string]string{
 			"namespace": "test-pulumi",
 			"env":       "local",
+			"dbUser":    "demo",
+		},
+		Secrets: map[string]string{
+			"dbPassword": "my-password",
 		},
 		ExtraRuntimeValidation: func(t *testing.T, stack integration.RuntimeValidationStackInfo) {
 			url := stack.Outputs["url"].(string)

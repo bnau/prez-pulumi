@@ -1,4 +1,7 @@
 encryptionsalt: v1:kzr40Z2Z9UU=:v1:j6lDD+JnpMcSr5Oj:tkXaH6Sn3fGcyN838ONW/q/QuJCmlg==
 config:
+  hello-pulumi:dbPassword:
+    secure: v1:7xUeZANc8QVC+d/6:ZqHoBC4zj5Kjddd+pBmx7gy+zbJh6GYjPV2o
+  hello-pulumi:dbUser: demo
   hello-pulumi:env: local
   hello-pulumi:namespace: demo-pulumi

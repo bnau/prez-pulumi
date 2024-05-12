@@ -1,3 +1,7 @@
+encryptionsalt: v1:+hysyMPDeSI=:v1:vcvINKuzpxYYRyr6:T2ZCHpHOnF7DqR7+GjzhrddVvjfGXA==
 config:
   aws:profile: ws-admin
+  hello-pulumi:dbPassword:
+    secure: v1:/YGYitreRC6POCwN:hM3jartV62rTXObLtYjG3ORKAu/DbuDaKjhJ
+  hello-pulumi:dbUser: demo
   hello-pulumi:env: remote

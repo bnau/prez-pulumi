@@ -1,7 +1,8 @@
-import {ComponentResource, Lifted, Output, OutputInstance} from "@pulumi/pulumi";
+import {ComponentResource, Output} from "@pulumi/pulumi";
+import * as pulumi from "@pulumi/pulumi";
 
-export const dbUser = "demo";
-export const dbPassword = "my-password";
+export const dbUser = new pulumi.Config().get("dbUser");
+export const dbPassword = new pulumi.Config().getSecret("dbPassword");
 export const dbName = "demo"
 
 export abstract class Stack extends ComponentResource {
